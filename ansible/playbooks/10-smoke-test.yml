@@ -1,0 +1,89 @@
+---
+- name: Kubernetes Smoke Test
+  hosts: jumpbox
+  tasks:
+    - name: Create nginx deployment
+      shell: |
+        kubectl create deployment nginx --image=nginx:1.24
+        kubectl wait --for=condition=available --timeout=300s deployment/nginx
+      register: nginx_deployment
+
+    - name: Expose nginx deployment
+      shell: |
+        kubectl expose deployment nginx --port 80 --type NodePort
+      register: nginx_service
+
+    - name: Get nginx service details
+      shell: kubectl get service nginx
+      register: nginx_service_info
+
+    - name: Display nginx service info
+      debug:
+        var: nginx_service_info.stdout_lines
+
+    - name: Get service node port
+      shell: kubectl get service nginx -o jsonpath='{.spec.ports[0].nodePort}'
+      register: node_port
+
+    - name: Test nginx access from worker nodes
+      shell: |
+        curl -s http://{{ hostvars[item].ansible_host }}:{{ node_port.stdout }} | grep "Welcome to nginx"
+      loop: "{{ groups['workers'] }}"
+      register: nginx_tests
+
+    - name: Display nginx test results
+      debug:
+        msg: "Nginx accessible on {{ item.item }}: {{ 'SUCCESS' if item.rc == 0 else 'FAILED' }}"
+      loop: "{{ nginx_tests.results }}"
+
+    - name: Test pod logs
+      shell: |
+        kubectl logs deployment/nginx
+      register: nginx_logs
+
+    - name: Display nginx logs
+      debug:
+        var: nginx_logs.stdout_lines
+
+    - name: Test pod exec
+      shell: |
+        kubectl exec deployment/nginx -- nginx -v
+      register: nginx_exec
+
+    - name: Display nginx exec result
+      debug:
+        var: nginx_exec.stdout_lines
+
+    - name: Create busybox pod for network testing
+      shell: |
+        kubectl run busybox --image=busybox:1.36 --restart=Never --rm -it -- nslookup kubernetes.default
+      register: dns_test
+
+    - name: Display DNS test result
+      debug:
+        var: dns_test.stdout_lines
+
+    - name: Clean up test resources
+      shell: |
+        kubectl delete deployment nginx
+        kubectl delete service nginx
+      ignore_errors: yes
+
+    - name: Final cluster status
+      shell: |
+        echo "=== Cluster Info ==="
+        kubectl cluster-info
+        echo ""
+        echo "=== Node Status ==="
+        kubectl get nodes -o wide
+        echo ""
+        echo "=== System Pods ==="
+        kubectl get pods --all-namespaces
+        echo ""
+        echo "=== Component Status ==="
+        kubectl get componentstatuses
+      register: final_status
+
+    - name: Display final cluster status
+      debug:
+        var: final_status.stdout_lines

@@ -1,0 +1,32 @@
+---
+- name: Configure kubectl for Remote Access
+  hosts: jumpbox
+  tasks:
+    - name: Create kubectl config directory
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0755'
+
+    - name: Copy admin kubeconfig to kubectl default location
+      copy:
+        src: /root/kubernetes-the-hard-way/admin.kubeconfig
+        dest: /root/.kube/config
+        mode: '0600'
+        remote_src: yes
+
+    - name: Verify cluster access
+      shell: kubectl cluster-info
+      register: cluster_info
+
+    - name: Display cluster info
+      debug:
+        var: cluster_info.stdout_lines
+
+    - name: Check node status
+      shell: kubectl get nodes -o wide
+      register: node_status
+
+    - name: Display node status
+      debug:
+        var: node_status.stdout_lines

@@ -1,0 +1,12 @@
+---
+- import_playbook: playbooks/00-prerequisites.yml
+- import_playbook: playbooks/01-jumpbox-setup.yml
+- import_playbook: playbooks/02-cluster-prep.yml
+- import_playbook: playbooks/03-certificates.yml
+- import_playbook: playbooks/04-kubeconfigs.yml
+- import_playbook: playbooks/05-encryption-config.yml
+- import_playbook: playbooks/06-etcd.yml
+- import_playbook: playbooks/07-control-plane.yml
+- import_playbook: playbooks/08-workers.yml
+- import_playbook: playbooks/09-kubectl-config.yml
+- import_playbook: playbooks/10-smoke-test.yml

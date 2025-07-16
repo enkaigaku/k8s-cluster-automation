@@ -1,0 +1,168 @@
+---
+- name: Bootstrap Kubernetes Control Plane
+  hosts: control_plane
+  tasks:
+    - name: Copy control plane binaries from jumpbox
+      shell: |
+        scp root@jumpbox:/root/kubernetes-the-hard-way/downloads/controller/kube-apiserver \
+            root@jumpbox:/root/kubernetes-the-hard-way/downloads/controller/kube-controller-manager \
+            root@jumpbox:/root/kubernetes-the-hard-way/downloads/controller/kube-scheduler \
+            /root/
+
+    - name: Copy systemd unit files from jumpbox
+      shell: |
+        scp root@jumpbox:/root/kubernetes-the-hard-way/units/kube-apiserver.service \
+            root@jumpbox:/root/kubernetes-the-hard-way/units/kube-controller-manager.service \
+            root@jumpbox:/root/kubernetes-the-hard-way/units/kube-scheduler.service \
+            /root/
+
+    - name: Copy configuration files from jumpbox
+      shell: |
+        scp root@jumpbox:/root/kubernetes-the-hard-way/configs/kube-scheduler.yaml \
+            /root/
+
+    - name: Install control plane binaries
+      copy:
+        src: "/root/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - kube-apiserver
+        - kube-controller-manager
+        - kube-scheduler
+
+    - name: Create Kubernetes directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /var/lib/kubernetes
+        - /etc/kubernetes/config
+
+    - name: Move API server certificates and configs
+      copy:
+        src: "/root/{{ item }}"
+        dest: "/var/lib/kubernetes/{{ item }}"
+        mode: '0600'
+        remote_src: yes
+      loop:
+        - ca.crt
+        - ca.key
+        - kube-api-server.crt
+        - kube-api-server.key
+        - service-accounts.crt
+        - service-accounts.key
+        - encryption-config.yaml
+
+    - name: Move controller manager and scheduler configs
+      copy:
+        src: "/root/{{ item }}"
+        dest: "/var/lib/kubernetes/{{ item }}"
+        mode: '0600'
+        remote_src: yes
+      loop:
+        - kube-controller-manager.kubeconfig
+        - kube-scheduler.kubeconfig
+
+    - name: Install kube-scheduler configuration
+      copy:
+        src: /root/kube-scheduler.yaml
+        dest: /etc/kubernetes/config/kube-scheduler.yaml
+        mode: '0644'
+        remote_src: yes
+
+    - name: Install systemd service files
+      copy:
+        src: "/root/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: '0644'
+        remote_src: yes
+      loop:
+        - kube-apiserver.service
+        - kube-controller-manager.service
+        - kube-scheduler.service
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start kube-apiserver
+      systemd:
+        name: kube-apiserver
+        enabled: yes
+        state: started
+
+    - name: Wait for kube-apiserver to be ready
+      wait_for:
+        port: 6443
+        host: 0.0.0.0
+        delay: 10
+        timeout: 60
+
+    - name: Enable and start kube-controller-manager
+      systemd:
+        name: kube-controller-manager
+        enabled: yes
+        state: started
+
+    - name: Enable and start kube-scheduler
+      systemd:
+        name: kube-scheduler
+        enabled: yes
+        state: started
+
+    - name: Wait for control plane components to be ready
+      pause:
+        seconds: 15
+
+    - name: Create ClusterRole for kubelet authorization
+      shell: |
+        kubectl apply --kubeconfig admin.kubeconfig -f - <<EOF
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          annotations:
+            rbac.authorization.kubernetes.io/autoupdate: "true"
+          labels:
+            kubernetes.io/bootstrapping: rbac-defaults
+          name: system:kube-apiserver-to-kubelet
+        rules:
+        - apiGroups:
+          - ""
+          resources:
+          - nodes/proxy
+          - nodes/stats
+          - nodes/log
+          - nodes/spec
+          - nodes/metrics
+          verbs:
+          - "*"
+        EOF
+
+    - name: Create ClusterRoleBinding for kubelet authorization
+      shell: |
+        kubectl apply --kubeconfig admin.kubeconfig -f - <<EOF
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: system:kube-apiserver
+          namespace: ""
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: system:kube-apiserver-to-kubelet
+        subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: User
+          name: kubernetes
+        EOF
+
+    - name: Verify control plane status
+      shell: kubectl get componentstatuses --kubeconfig admin.kubeconfig
+      register: component_status
+
+    - name: Display component status
+      debug:
+        var: component_status.stdout_lines

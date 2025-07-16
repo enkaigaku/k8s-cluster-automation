@@ -1,0 +1,131 @@
+---
+- name: Setup Jumpbox
+  hosts: jumpbox
+  become: yes
+  tasks:
+    - name: Create downloads directory
+      file:
+        path: /root/kubernetes-the-hard-way/downloads
+        state: directory
+        mode: '0755'
+
+    - name: Create downloads subdirectories
+      file:
+        path: "/root/kubernetes-the-hard-way/downloads/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - client
+        - controller
+        - worker
+        - cni-plugins
+
+    - name: Download Kubernetes binaries
+      get_url:
+        url: "{{ download_urls[item] }}"
+        dest: "/root/kubernetes-the-hard-way/downloads/{{ item }}"
+        mode: '0755'
+      loop:
+        - kubectl
+        - kube_apiserver
+        - kube_controller_manager
+        - kube_scheduler
+        - kube_proxy
+        - kubelet
+
+    - name: Download and extract crictl
+      unarchive:
+        src: "{{ download_urls.crictl }}"
+        dest: /root/kubernetes-the-hard-way/downloads/worker/
+        remote_src: yes
+        mode: '0755'
+
+    - name: Download runc
+      get_url:
+        url: "{{ download_urls.runc }}"
+        dest: /root/kubernetes-the-hard-way/downloads/worker/runc
+        mode: '0755'
+
+    - name: Download and extract CNI plugins
+      unarchive:
+        src: "{{ download_urls.cni_plugins }}"
+        dest: /root/kubernetes-the-hard-way/downloads/cni-plugins/
+        remote_src: yes
+        mode: '0755'
+
+    - name: Download and extract containerd
+      unarchive:
+        src: "{{ download_urls.containerd }}"
+        dest: /root/kubernetes-the-hard-way/downloads/worker/
+        remote_src: yes
+        extra_opts: ['--strip-components=1']
+        mode: '0755'
+
+    - name: Download and extract etcd
+      unarchive:
+        src: "{{ download_urls.etcd }}"
+        dest: /tmp/
+        remote_src: yes
+        creates: "/tmp/etcd-{{ etcd_version }}-linux-amd64"
+
+    - name: Move etcd binaries to correct locations
+      copy:
+        src: "/tmp/etcd-{{ etcd_version }}-linux-amd64/{{ item.src }}"
+        dest: "/root/kubernetes-the-hard-way/downloads/{{ item.dest }}"
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - { src: 'etcd', dest: 'controller/etcd' }
+        - { src: 'etcdctl', dest: 'client/etcdctl' }
+
+    - name: Move Kubernetes binaries to correct locations
+      copy:
+        src: "/root/kubernetes-the-hard-way/downloads/{{ item.src }}"
+        dest: "/root/kubernetes-the-hard-way/downloads/{{ item.dest }}"
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - { src: 'kubectl', dest: 'client/kubectl' }
+        - { src: 'kube_apiserver', dest: 'controller/kube-apiserver' }
+        - { src: 'kube_controller_manager', dest: 'controller/kube-controller-manager' }
+        - { src: 'kube_scheduler', dest: 'controller/kube-scheduler' }
+        - { src: 'kube_proxy', dest: 'worker/kube-proxy' }
+        - { src: 'kubelet', dest: 'worker/kubelet' }
+
+    - name: Remove temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /root/kubernetes-the-hard-way/downloads/kubectl
+        - /root/kubernetes-the-hard-way/downloads/kube_apiserver
+        - /root/kubernetes-the-hard-way/downloads/kube_controller_manager
+        - /root/kubernetes-the-hard-way/downloads/kube_scheduler
+        - /root/kubernetes-the-hard-way/downloads/kube_proxy
+        - /root/kubernetes-the-hard-way/downloads/kubelet
+        - "/tmp/etcd-{{ etcd_version }}-linux-amd64"
+
+    - name: Install kubectl on jumpbox
+      copy:
+        src: /root/kubernetes-the-hard-way/downloads/client/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+        remote_src: yes
+
+    - name: Copy project files to jumpbox working directory
+      copy:
+        src: "{{ item }}"
+        dest: /root/kubernetes-the-hard-way/
+        mode: preserve
+      loop:
+        - /home/ubuntu/k8s/ca.conf
+        - /home/ubuntu/k8s/configs/
+        - /home/ubuntu/k8s/units/
+
+    - name: Generate SSH key for cluster access
+      openssh_keypair:
+        path: /root/.ssh/id_rsa
+        type: rsa
+        size: 4096
+        state: present
+        force: no

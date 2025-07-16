@@ -1,0 +1,74 @@
+---
+- name: Bootstrap etcd Cluster
+  hosts: control_plane
+  tasks:
+    - name: Copy etcd binaries from jumpbox
+      shell: |
+        scp root@jumpbox:/root/kubernetes-the-hard-way/downloads/controller/etcd \
+            root@jumpbox:/root/kubernetes-the-hard-way/downloads/client/etcdctl \
+            root@jumpbox:/root/kubernetes-the-hard-way/units/etcd.service \
+            /root/
+
+    - name: Install etcd binaries
+      copy:
+        src: "/root/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - etcd
+        - etcdctl
+
+    - name: Create etcd directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/etcd
+        - /var/lib/etcd
+
+    - name: Move etcd certificates
+      copy:
+        src: "/root/{{ item }}"
+        dest: "/etc/etcd/{{ item }}"
+        mode: '0600'
+        remote_src: yes
+      loop:
+        - ca.crt
+        - kube-api-server.key
+        - kube-api-server.crt
+
+    - name: Install etcd systemd service
+      copy:
+        src: /root/etcd.service
+        dest: /etc/systemd/system/etcd.service
+        mode: '0644'
+        remote_src: yes
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start etcd service
+      systemd:
+        name: etcd
+        enabled: yes
+        state: started
+
+    - name: Wait for etcd to be ready
+      wait_for:
+        port: 2379
+        host: 127.0.0.1
+        delay: 5
+        timeout: 60
+
+    - name: Verify etcd cluster health
+      shell: etcdctl member list --write-out=table
+      environment:
+        ETCDCTL_API: 3
+      register: etcd_members
+
+    - name: Display etcd cluster members
+      debug:
+        var: etcd_members.stdout_lines

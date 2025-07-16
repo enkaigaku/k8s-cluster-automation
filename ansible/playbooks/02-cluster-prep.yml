@@ -1,0 +1,64 @@
+---
+- name: Prepare Cluster Machines
+  hosts: jumpbox
+  tasks:
+    - name: Read SSH public key
+      slurp:
+        src: /root/.ssh/id_rsa.pub
+      register: ssh_public_key
+
+    - name: Create machines.txt file
+      template:
+        src: ../templates/machines.txt.j2
+        dest: /root/kubernetes-the-hard-way/machines.txt
+        mode: '0644'
+
+    - name: Create hosts file entries
+      template:
+        src: ../templates/hosts.j2
+        dest: /root/kubernetes-the-hard-way/hosts
+        mode: '0644'
+
+- name: Configure SSH access and hostnames
+  hosts: cluster
+  tasks:
+    - name: Add jumpbox SSH key to authorized_keys
+      authorized_key:
+        user: root
+        state: present
+        key: "{{ hostvars['jumpbox']['ssh_public_key']['content'] | b64decode }}"
+
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Update /etc/hosts with cluster entries
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ hostvars[item].ansible_host }} {{ item }}.kubernetes.local {{ item }}"
+        state: present
+      loop: "{{ groups['cluster'] }}"
+
+- name: Update jumpbox /etc/hosts
+  hosts: jumpbox
+  tasks:
+    - name: Update jumpbox /etc/hosts with cluster entries
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ hostvars[item].ansible_host }} {{ item }}.kubernetes.local {{ item }}"
+        state: present
+      loop: "{{ groups['cluster'] }}"
+
+- name: Verify SSH connectivity
+  hosts: jumpbox
+  tasks:
+    - name: Test SSH connectivity to cluster nodes
+      command: ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@{{ hostvars[item].ansible_host }} hostname
+      loop: "{{ groups['cluster'] }}"
+      register: ssh_test
+      failed_when: ssh_test.rc != 0
+
+    - name: Display connectivity test results
+      debug:
+        msg: "Successfully connected to {{ item.item }}: {{ item.stdout }}"
+      loop: "{{ ssh_test.results }}"
